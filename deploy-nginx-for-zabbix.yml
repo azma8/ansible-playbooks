@@ -12,9 +12,16 @@
         state: started
         enabled: yes
 
-    - name: configuration nginx 
+    - name: create file stub_module.conf
+      file:
+        path: /etc/nginx/default.d/stub_module.conf
+        state: touch
+
+    - name: configuration nginx for monitoring 
       blockinfile:
-        path: /etc/nginx/nginx.d/default.conf
+        path: /etc/nginx/default.d/stub_module.conf
+        append_newline: true
+        prepend_newline: true
         block: |
             location = /basic_status {
               stub_status;
@@ -22,7 +29,6 @@
               allow ::1;
               deny all;
             }
-        insertbefore: '80;'
         state: present
 
     - name: restart nginx after configure
