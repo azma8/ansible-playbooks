@@ -26,6 +26,6 @@
         state: present
 
     - name: restart nginx after configure
-      services:
+      service:
         name: nginx
         state: restarted
