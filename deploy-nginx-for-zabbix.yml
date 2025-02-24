@@ -7,7 +7,7 @@
         state: present
 
     - name: make sure nginx running and enable
-      services:
+      service:
         name: nginx
         state: started
         enabled: yes
