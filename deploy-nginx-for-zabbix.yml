@@ -1,0 +1,31 @@
+- name: deploy nginx for zabbix
+  hosts: all
+  tasks:
+    - name: install nginx
+      dnf:
+        name: nginx
+        state: present
+
+    - name: make sure nginx running and enable
+      services:
+        name: nginx
+        state: started
+        enabled: yes
+
+    - name: configuration nginx 
+      blockinfile:
+        path: /etc/nginx/nginx.d/default.conf
+        block: |
+            location = /basic_status {
+              stub_status;
+              allow 127.0.0.1;
+              allow ::1;
+              deny all;
+            }
+        insertbefore: '80;'
+        state: present
+
+    - name: restart nginx after configure
+      services:
+        name: nginx
+        state: restarted
