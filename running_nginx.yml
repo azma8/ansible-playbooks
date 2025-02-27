@@ -1,0 +1,8 @@
+---
+- name: running nginx
+  hosts: all
+  tasks:
+    - name: running nginx
+      service:
+        name: nginx
+        state: started
