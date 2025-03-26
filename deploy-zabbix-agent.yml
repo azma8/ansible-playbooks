@@ -22,14 +22,14 @@
       lineinfile:
         path: /etc/zabbix/zabbix_agentd.conf
         regexp: '^Server='
-        line: "Server=10.8.60.77"
+        line: "Server=10.8.60.115"
         state: present
 
     - name: change target server active zabbix
       lineinfile:
         path: /etc/zabbix/zabbix_agentd.conf
         regexp: '^ServerActive='
-        line: "ServerActive=10.8.60.77"
+        line: "ServerActive=10.8.60.115"
         state: present
 
     - name: change hostname zabbix agent
