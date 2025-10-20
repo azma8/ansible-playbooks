@@ -1,0 +1,1272 @@
+- name: Hardening linux
+  hosts: all
+  become: yes
+  vars:
+    today: "{{ lookup('pipe', 'date +%Y_%m_%d__%H_%M_%S') }}"
+    date: "{{ lookup('pipe', 'date +%Y_%m_%d') }}"
+  tasks:
+  ##Check OS version##
+  - name: Check OS version
+    command: cat /etc/redhat-release
+    register: os_version
+
+  - name: Display os version
+    debug:
+      var: os_version.stdout
+
+  - name: Check kernel version
+    ##Check Kernel version##
+    command: uname -a
+    register: kernel_version
+
+  - name: Display kernel version
+    debug:
+      var: kernel_version.stdout
+
+  - name: Check partition usage
+    ##Check partition usage##
+    command: df -h
+    register: partition_usage
+
+  - name: Display partition usage
+    debug:
+      var: partition_usage.stdout_lines
+
+  - name: Touch /etc/modprobe.d/CIS.conf
+    ##02 Hardening Initial Setup##
+    ##Disable filesystem##
+    file:
+      path: /etc/modprobe.d/CIS.conf
+      state: touch
+
+  - name: Ensure the line 'install squashfs /bin/true' is present in /etc/modprobe.d/CIS.conf
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install squashfs /bin/true'
+      state: present
+
+  - name: Ensure the line 'install udf /bin/true' is present in /etc/modprobe.d/CIS.conf
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install udf /bin/true'
+      state: present
+
+  - name: Ensure the line 'install jffs2 /bin/true' is present in /etc/modprobe.d/CIS.conf
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install jffs2 /bin/true'
+      state: present
+
+  - name: Ensure the line 'install cramfs /bin/true' is present in /etc/modprobe.d/CIS.conf
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install cramfs /bin/true'
+      state: present
+
+  - name: Ensure the line 'install freevxfs /bin/true' is present in /etc/modprobe.d/CIS.conf
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install freevxfs /bin/true'
+      state: present
+
+  - name: Ensure the line 'install hfs /bin/true' is present in /etc/modprobe.d/CIS.conf
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install hfs /bin/true'
+      state: present
+
+  - name: Ensure the line 'install hfsplus /bin/true' is present in /etc/modprobe.d/CIS.conf
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install hfsplus /bin/true'
+      state: present
+
+  - name: Ensure the line 'install usb-storage /bin/true' is present in /etc/modprobe.d/CIS.conf
+    ##Disable FAKE USB##
+    lineinfile:
+      path: /etc/modprobe.d/CIS.conf
+      line: 'install usb-storage /bin/true'
+      state: present
+
+  - name: Ensure gpgcheck=1 is present in /etc/dnf/dnf.conf
+    ##Enable gpgcheck on repos##
+    lineinfile:
+      path: /etc/dnf/dnf.conf
+      regexp: '^gpgcheck='
+      line: 'gpgcheck=1'
+      create: yes
+
+  - name: Find all YUM repo files on managed hosts
+    find:
+      paths: /etc/yum.repos.d/
+      patterns: '*.repo'
+    register: repo_files
+
+  - name: Ensure 'gpgcheck=1' is set in all YUM repo files on managed hosts
+    lineinfile:
+      path: "{{ item.path }}"
+      regexp: '^gpgcheck='
+      line: 'gpgcheck=1'
+      state: present
+    loop: "{{ repo_files.files }}"
+
+  - name: Install AIDE package
+    ##AIDE Service##
+    package:
+      name: aide
+      state: present
+    ignore_errors: yes
+
+  - name: Initialize AIDE database
+    command: aide --init
+    register: aide_init
+    ignore_errors: yes
+
+  - name: Move new AIDE database to the correct location
+    command: mv /var/lib/aide/aide.db.new.gz /var/lib/aide/aide.db.gz
+    when: aide_init.rc == 0
+
+  - name: Add AIDE check to crontab
+    cron:
+      name: "Run AIDE check daily"
+      minute: "0"
+      hour: "5"
+      job: "/usr/sbin/aide --check"
+      user: root
+
+  - name: Set ownership and permissions on /etc/motd
+    #Permission motd##
+    file:
+      path: /etc/motd
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/issue
+    ##Permission issue##
+    file:
+      path: /etc/issue
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/issue.net
+    file:
+      path: /etc/issue.net
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Remove the line 'Enable=true' from /etc/gdm/custom.conf
+    ##XDCMP not enabled##
+    lineinfile:
+      path: /etc/gdm/custom.conf
+      regexp: '^Enable=true'
+      state: absent
+
+  - name: Update all packages using YUM
+    ##Check yum packages##
+    yum:
+      name: '*'
+      state: latest
+
+  - name: Ensure all security updates are applied
+    yum:
+      name: '*'
+      state: latest
+      security: yes
+    args:
+      update_only: yes
+
+  - name: Check if a reboot is required
+    command: yum needs-restarting -r
+    register: reboot_check
+    changed_when: False
+    failed_when: False
+
+  - name: Install chrony
+    ##03 Hardening Service##
+    ##Config chrony##
+    yum:
+      name: chrony
+      state: present
+
+  - name: Check if the pool line is commented
+    shell: "grep '^#pool' /etc/chrony.conf"
+    register: pool_comment
+    ignore_errors: true
+
+  - name: Comment the pool line in chrony.conf if not commented
+    command: "sed -i '/^pool/s/^/#/' /etc/chrony.conf"
+    when: pool_comment.rc != 0
+
+  - name: Configure NTP servers in /etc/chrony.conf
+    blockinfile:
+      path: /etc/chrony.conf
+      block: |
+        server 192.168.124.1
+        server 192.168.124.2
+        server 192.168.224.1
+        server 192.168.224.2
+      insertafter: '^#pool*'
+      marker: "# {mark} ANSIBLE MANAGED BLOCK - NTP Servers"
+
+  - name: Set OPTIONS in /etc/sysconfig/chronyd
+    lineinfile:
+      path: /etc/sysconfig/chronyd
+      regexp: '^OPTIONS='
+      line: 'OPTIONS="-u chrony"'
+      create: yes
+
+  - name: Ensure timedatectl ntp yes
+    command: timedatectl set-ntp yes
+
+  - name: Ensure timedatectl set timezone Asia/Jakarta
+    command: timedatectl set-timezone Asia/Jakarta
+
+  - name: Ensure chronyd service is start and enable
+    systemd:
+      name: chronyd
+      state: restarted
+      enabled: yes
+
+  - name: Remove X Windows Server packages
+    ##Remove Packages##
+    yum:
+      name: xorg-x11-server-common
+      state: absent
+
+  - name: Stop and mask avahi services
+    systemd:
+      name: avahi-daemon
+      state: stopped
+      masked: yes
+      enabled: no
+    ignore_errors: yes
+
+  - name: Remove avahi package
+    yum:
+      name: avahi
+      state: absent
+
+  - name: Remove CUPS package
+    yum:
+      name: cups
+      state: absent
+
+  - name: Remove DHCP server package
+    yum:
+      name: dhcp-server
+      state: absent
+
+  - name: Remove BIND package
+    yum:
+      name: bind
+      state: absent
+
+  - name: Remove Dovecot and Cyrus-IMAPD packages
+    yum:
+      name:
+      - dovecot
+      - cyrus-imapd
+      state: absent
+
+  - name: Remove Samba package
+    yum:
+      name: samba
+      state: absent
+
+  - name: Remove Squid package
+    yum:
+      name: squid
+      state: absent
+
+  - name: Gather service facts
+    ##Ensure postfix only localhost##
+    service_facts:
+
+  - name: Check if Postfix is installed
+    set_fact:
+      postfix_installed: "{{ 'postfix.service' in ansible_facts.services }}"
+
+  - name: Configure Postfix to listen on loopback-only
+    lineinfile:
+      path: /etc/postfix/main.cf
+      regexp: '^inet_interfaces'
+      line: 'inet_interfaces = loopback-only'
+      state: present
+    when: postfix_installed
+
+  - name: Restart Postfix service
+    systemd:
+      name: postfix
+      state: restarted
+    when: postfix_installed
+
+  - name: Clear all configuration /etc/sysctl.conf
+    command: sed -i '/# For more information, see sysctl.conf(5) and sysctl.d(5)./q' /etc/sysctl.conf
+
+  - name: Disable source route acceptance
+    ##04 Hardening Network##
+    ##source routed packets are not accepted##
+    block:
+    # - name: Comment out existing source route settings in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.all.accept_source_route'
+    #     line: '# net.ipv4.conf.all.accept_source_route'
+    #     state: present
+
+    # - name: Comment out existing default source route settings in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.default.accept_source_route'
+    #     line: '# net.ipv4.conf.default.accept_source_route'
+    #     state: present
+
+    - name: Add source route settings to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.all.accept_source_route = 0'
+        state: present
+        create: yes
+
+    - name: Add default source route settings to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.default.accept_source_route = 0'
+        state: present
+        create: yes
+
+    - name: Apply source route settings
+      command: sysctl -w net.ipv4.conf.all.accept_source_route=0
+
+    - name: Apply default source route settings
+      command: sysctl -w net.ipv4.conf.default.accept_source_route=0
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Disable redirect acceptance
+    ##ICMP redirects are not accepted##
+    block:
+    # - name: Comment out existing redirect acceptance settings in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.all.accept_redirects'
+    #     line: '# net.ipv4.conf.all.accept_redirects'
+    #     state: present
+
+    # - name: Comment out existing default redirect acceptance settings in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.default.accept_redirects'
+    #     line: '# net.ipv4.conf.default.accept_redirects'
+    #     state: present
+
+    - name: Add redirect acceptance settings to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.all.accept_redirects = 0'
+        state: present
+        create: yes
+
+    - name: Add default redirect acceptance settings to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.default.accept_redirects = 0'
+        state: present
+        create: yes
+
+    - name: Apply redirect acceptance settings
+      command: sysctl -w net.ipv4.conf.all.accept_redirects=0
+
+    - name: Apply default redirect acceptance settings
+      command: sysctl -w net.ipv4.conf.default.accept_redirects=0
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Disable secure redirects
+    ##secure ICMP redirects are not accepted##
+    block:
+    # - name: Comment out existing secure redirects settings in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.all.secure_redirects'
+    #     line: '# net.ipv4.conf.all.secure_redirects'
+    #     state: present
+
+    # - name: Comment out existing default secure redirects settings in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.default.secure_redirects'
+    #     line: '# net.ipv4.conf.default.secure_redirects'
+    #     state: present
+
+    - name: Add secure redirects settings to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.all.secure_redirects = 0'
+        state: present
+        create: yes
+
+    - name: Add default secure redirects settings to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.default.secure_redirects = 0'
+        state: present
+        create: yes
+
+    - name: Apply secure redirects settings
+      command: sysctl -w net.ipv4.conf.all.secure_redirects=0
+
+    - name: Apply default secure redirects settings
+      command: sysctl -w net.ipv4.conf.default.secure_redirects=0
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Ignore ICMP Echo Broadcasts
+    ##broadcast ICMP requests are ignored##
+    block:
+    # - name: Comment out existing ICMP Echo Broadcasts setting in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.icmp_echo_ignore_broadcasts'
+    #     line: '# net.ipv4.icmp_echo_ignore_broadcasts'
+    #     state: present
+
+    # - name: Add ICMP Echo Broadcasts setting to /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     line: 'net.ipv4.icmp_echo_ignore_broadcasts = 1'
+    #     state: present
+    #     create: yes
+
+    - name: Apply ICMP Echo Broadcasts setting
+      command: sysctl -w net.ipv4.icmp_echo_ignore_broadcasts=1
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Ignore Bogus ICMP Error Responses
+    ##bogus ICMP responses are ignored##
+    block:
+    # - name: Comment out existing ICMP Error Responses setting in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.icmp_ignore_bogus_error_responses'
+    #     line: '# net.ipv4.icmp_ignore_bogus_error_responses'
+    #     state: present
+
+    - name: Add ICMP Error Responses setting to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.icmp_ignore_bogus_error_responses = 1'
+        state: present
+        create: yes
+
+    - name: Apply ICMP Error Responses setting
+      command: sysctl -w net.ipv4.icmp_ignore_bogus_error_responses=1
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Enable TCP SYN Cookies
+    ##TCP SYN Cookies is enabled##
+    block:
+    # - name: Comment out existing TCP SYN Cookies setting in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.tcp_syncookies'
+    #     line: '# net.ipv4.tcp_syncookies'
+    #     state: present
+
+    - name: Add TCP SYN Cookies setting to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.tcp_syncookies = 1'
+        state: present
+        create: yes
+
+    - name: Apply TCP SYN Cookies setting
+      command: sysctl -w net.ipv4.tcp_syncookies=1
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Enable Reverse Path Filtering
+    ##Reverse Path Filtering is enabled##
+    block:
+    # - name: Comment out existing Reverse Path Filtering setting in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.all.rp_filter'
+    #     line: '# net.ipv4.conf.all.rp_filter'
+    #     state: present
+
+    # - name: Comment out existing default Reverse Path Filtering setting in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.default.rp_filter'
+    #     line: '# net.ipv4.conf.default.rp_filter'
+    #     state: present
+
+    - name: Add Reverse Path Filtering setting to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.all.rp_filter = 1'
+        state: present
+        create: yes
+
+    - name: Add default Reverse Path Filtering setting to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.default.rp_filter = 1'
+        state: present
+        create: yes
+
+    - name: Apply Reverse Path Filtering setting
+      command: sysctl -w net.ipv4.conf.all.rp_filter=1
+
+    - name: Apply default Reverse Path Filtering setting
+      command: sysctl -w net.ipv4.conf.default.rp_filter=1
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Log Martians
+    ##suspicious packets are logged##
+    block:
+    # - name: Comment out existing Log Martians setting in /etc/sysctl.conf
+    #   lineinfile:
+    #     path: /etc/sysctl.conf
+    #     regexp: '^net.ipv4.conf.all.log_martians'
+    #     line: '# net.ipv4.conf.all.log_martians'
+    #     state: present
+
+    - name: Add Log Martians setting to /etc/sysctl.conf
+      lineinfile:
+        path: /etc/sysctl.conf
+        line: 'net.ipv4.conf.all.log_martians = 1'
+        state: present
+        create: yes
+
+    - name: Apply Log Martians setting
+      command: sysctl -w net.ipv4.conf.all.log_martians=1
+
+    - name: Flush route settings
+      command: sysctl -w net.ipv4.route.flush=1
+
+  - name: Install auditd package
+    ##05 Hardening Audit and Logging##
+    ##Config auditig##
+    yum:
+      name: audit
+      state: present
+
+  - name: Start and enable auditd service
+    systemd:
+      name: auditd
+      state: started
+      enabled: yes
+
+  - name: Ensure auditd is installed and running
+    command: systemctl status auditd
+    register: auditd_status
+    changed_when: False
+
+  - name: Display auditd service status
+    debug:
+      msg: "Auditd service status: {{ auditd_status.stdout_lines }}"
+
+  - name: Update GRUB2 configuration with audit=1
+    command: grubby --update-kernel ALL --args 'audit=1'
+    register: grubby_update
+    changed_when: "'Updated' in grubby_update.stdout"
+
+  - name: Display grubby update output
+    debug:
+      msg: "Grubby update output: {{ grubby_update.stdout }}"
+
+  - name: Create or update audit rules file for sudoers, sudo log, time changes, system locale, and privileged commands
+    copy:
+      dest: /etc/audit/rules.d/monitor_scope_and_sudo_log_and_time_changes_and_system_locale_and_privileged_commands.rules
+      content: |
+        -w /etc/sudoers -p wa -k scope
+        -w /etc/sudoers.d -p wa -k scope
+        -w /var/log/secure -p wa -k sudo_log
+        -a always,exit -F arch=b64 -S adjtimex,settimeofday,clock_settime -k timechange
+        -a always,exit -F arch=b32 -S adjtimex,settimeofday,clock_settime -k timechange
+        -w /etc/localtime -p wa -k time-change
+        -a always,exit -F arch=b64 -S sethostname,setdomainname -k system-locale
+        -a always,exit -F arch=b32 -S sethostname,setdomainname -k system-locale
+        -w /etc/issue -p wa -k system-locale
+        -w /etc/issue.net -p wa -k system-locale
+        -w /etc/hosts -p wa -k system-locale
+        -w /etc/sysconfig/network -p wa -k system-locale
+        -w /etc/sysconfig/network-scripts/ -p wa -k system-locale
+        -w /usr/bin/sudo -p x -k privileged-commands
+        -w /etc/passwd -p wa -k passwd_changes
+        -w /etc/shadow -p wa -k shadow_changes
+        -a always,exit -F arch=b64 -F euid=0 -S execve -k root_activity
+      owner: root
+      group: root
+      mode: '0640'
+
+  - name: Merge and load audit rules
+    command: augenrules --load
+    register: augenrules_status
+    changed_when: "'Rules loaded' in augenrules_status.stdout"
+
+  - name: Display augenrules output
+    debug:
+      msg: "Augenrules output: {{ augenrules_status.stdout }}"
+
+  - name: Check if reboot is required
+    command: yum needs-restarting -r
+    register: reboot_check
+    ignore_errors: yes
+
+  - name: Display reboot required status
+    debug:
+      msg: "Reboot required status: {{ reboot_check.stdout }}"
+    when: reboot_check.rc == 0
+
+  - name: Check if auditd is enabled
+    command: auditctl -s
+    register: auditctl_status
+    changed_when: False
+
+  - name: Display auditctl status and determine if reboot is required
+    debug:
+      msg: |
+        Auditctl status: {{ auditctl_status.stdout }}
+        {% if 'enabled' in auditctl_status.stdout and '2' in auditctl_status.stdout %}
+          Reboot required to load rules
+        {% else %}
+          No reboot required
+        {% endif %}
+
+  - name: Find all files and directories in /var/log/audit
+    ansible.builtin.find:
+      paths: /var/log/audit
+      recurse: yes
+    register: audit_files
+
+  - name: Set permissions and ownership
+    ansible.builtin.file:
+      path: "{{ item.path }}"
+      mode: '0640'
+      owner: root
+      group: root
+    loop: "{{ audit_files.files }}"
+
+  - name: Verify audit log directory has mode 0750 or less permissive
+    file:
+      path: "/var/log/audit"
+      state: directory
+      mode: '0750'
+    register: directory_permissions
+    changed_when: False
+
+  - name: Display directory permissions verification results
+    debug:
+      msg: "Directory permissions verification results: {{ directory_permissions }}"
+
+  - name: Find all files and directories in /etc/audit
+    ansible.builtin.find:
+      paths: /etc/audit
+      recurse: yes
+    register: audit_files
+
+  - name: Set permissions and ownership
+    ansible.builtin.file:
+      path: "{{ item.path }}"
+      mode: '0640'
+      owner: root
+      group: root
+    loop: "{{ audit_files.files }}"
+
+  - name: Remove more permissive mode from audit tools
+    file:
+      path: "{{ item }}"
+      mode: '0750'
+    loop:
+    - /sbin/auditctl
+    - /sbin/aureport
+    - /sbin/ausearch
+    - /sbin/autrace
+    - /sbin/auditd
+    - /sbin/augenrules
+    register: audit_tools_permissions
+    changed_when: False
+
+  - name: Display audit tools permissions modification results
+    debug:
+      msg: "Audit tools permissions modification results: {{ audit_tools_permissions.results }}"
+
+  - name: Change the owner of audit tools to root
+    file:
+      path: "{{ item }}"
+      owner: root
+    loop:
+    - /sbin/auditctl
+    - /sbin/aureport
+    - /sbin/ausearch
+    - /sbin/autrace
+    - /sbin/auditd
+    - /sbin/augenrules
+    register: audit_tools_ownership
+    changed_when: False
+
+  - name: Display audit tools ownership modification results
+    debug:
+      msg: "Audit tools ownership modification results: {{ audit_tools_ownership.results }}"
+
+  - name: Set ownership and permissions on /etc/crontab
+    ##06 Hardening Access, Authentication and Authorization##
+    file:
+      path: /etc/crontab
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/cron.hourly
+    file:
+      path: /etc/cron.hourly
+      owner: root
+      group: root
+      mode: '0700'
+
+  - name: Set ownership and permissions on /etc/cron.daily
+    file:
+      path: /etc/cron.daily
+      owner: root
+      group: root
+      mode: '0700'
+
+  - name: Set ownership and permissions on /etc/cron.weekly
+    file:
+      path: /etc/cron.weekly
+      owner: root
+      group: root
+      mode: '0700'
+
+  - name: Set ownership and permissions on /etc/cron.monthly
+    file:
+      path: /etc/cron.monthly
+      owner: root
+      group: root
+      mode: '0700'
+
+  - name: Set ownership and permissions on /etc/cron.d
+    file:
+      path: /etc/cron.d
+      owner: root
+      group: root
+      mode: '0700'
+
+  - name: Remove /etc/cron.deny and create /etc/cron.allow
+    file:
+      path: /etc/cron.deny
+      state: absent
+
+  - name: Create /etc/cron.allow with restrictive permissions
+    file:
+      path: /etc/cron.allow
+      owner: root
+      group: root
+      mode: '0600'
+      state: touch
+
+  - name: Remove at package
+    yum:
+      name: at
+      state: absent
+
+  - name: Set ownership and permissions on /etc/ssh/sshd_config
+    file:
+      path: /etc/ssh/sshd_config
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/ssh/ssh_host_ecdsa_key
+    file:
+      path: /etc/ssh/ssh_host_ecdsa_key
+      owner: root
+      group: ssh_keys
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/ssh/ssh_host_ed25519_key
+    file:
+      path: /etc/ssh/ssh_host_ed25519_key
+      owner: root
+      group: ssh_keys
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/ssh/ssh_host_rsa_key
+    file:
+      path: /etc/ssh/ssh_host_rsa_key
+      owner: root
+      group: ssh_keys
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/ssh/ssh_host_ecdsa_key.pub
+    file:
+      path: /etc/ssh/ssh_host_ecdsa_key.pub
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/ssh/ssh_host_ed25519_key.pub
+    file:
+      path: /etc/ssh/ssh_host_ed25519_key.pub
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Set ownership and permissions on /etc/ssh/ssh_host_rsa_key.pub
+    file:
+      path: /etc/ssh/ssh_host_rsa_key.pub
+      owner: root
+      group: root
+      mode: '0600'
+
+  - name: Set multiple SSH configurations in /etc/ssh/sshd_config
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: "{{ item.regexp }}"
+      line: "{{ item.line }}"
+      create: yes
+    loop:
+    - {regexp: '^#?UsePAM', line: 'UsePAM yes'}
+    - {regexp: '^#?PermitRootLogin', line: 'PermitRootLogin yes'}
+    - {regexp: '^#?HostbasedAuthentication', line: 'HostbasedAuthentication no'}
+    - {regexp: '^#?PermitEmptyPasswords', line: 'PermitEmptyPasswords no'}
+    - {regexp: '^#?PermitUserEnvironment', line: 'PermitUserEnvironment no'}
+    - {regexp: '^#?IgnoreRhosts', line: 'IgnoreRhosts yes'}
+    - {regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300'}
+    - {regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 3'}
+    - {regexp: '^#?LoginGraceTime', line: 'LoginGraceTime 60'}
+    - {regexp: '^#?X11Forwarding', line: 'X11Forwarding no'}
+    - {regexp: '^#?Banner', line: 'Banner /etc/issue.net'}
+    - {regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 5'}
+    - {regexp: '^#?MaxStartups', line: 'MaxStartups 10:30:60'}
+    - {regexp: '^#?MaxSessions', line: 'MaxSessions 4',}
+
+  - name: Ensure the /etc/issue.net file exists
+    file:
+      path: /etc/issue.net
+      state: touch
+
+  - name: Check if the warning message is already present
+    shell: grep -Fxq '* * * * * * * W A R N I N G * * * * * * * * * *' /etc/issue.net
+    register: issue_warning_present
+    ignore_errors: yes
+    changed_when: false
+
+  - name: Ensure warning message in /etc/issue.net
+    lineinfile:
+      path: /etc/issue.net
+      create: yes
+      line: |
+        * * * * * * * W A R N I N G * * * * * * * * * *
+        This computer system is the property of PT. Bank Pembangunan Daerah Jawa Barat dan Banten, Tbk (bank bjb). It is for authorized use only.
+        Any or all uses of this system and all files on this system may be intercepted, monitored, recorded, copied, audited, inspected,
+        and disclosed to authorized bank bjb and law enforcement personnel. By using this system, the user consents to such interception,
+        monitoring, recording, copying, auditing, inspection, and disclosure at the discretion of authorized bank bjb personnel.
+        Unauthorized or improper use of this system may result in administrative disciplinary action and/or civil charges/criminal penalties.
+        By continuing to use this system you indicate your awareness of and consent to these terms and conditions of use.
+        LOG OFF IMMEDIATELY if you do not agree to the conditions stated in this warning.
+        * * * * * BANK BJB * * * * * * * *
+      state: present
+      mode: '0644'
+      insertafter: EOF
+    when: issue_warning_present.rc != 0
+
+  - name: Install sudo package
+    yum:
+      name: sudo
+      state: present
+
+  - name: Configure password policy in /etc/security/pwquality.conf
+    lineinfile:
+      path: /etc/security/pwquality.conf
+      regexp: '^#?\s*(minlen\s*=\s*)'
+      line: 'minlen = 7'
+      state: present
+      backrefs: yes
+
+  - name: Ensure minclass is set in /etc/security/pwquality.conf
+    lineinfile:
+      path: /etc/security/pwquality.conf
+      regexp: '^#?\s*(minclass\s*=\s*)'
+      line: 'minclass = 4'
+      state: present
+      backrefs: yes
+
+  - name: Ensure dcredit is set in /etc/security/pwquality.conf
+    lineinfile:
+      path: /etc/security/pwquality.conf
+      regexp: '^#?\s*(dcredit\s*=\s*)'
+      line: 'dcredit = -1'
+      state: present
+      backrefs: yes
+
+  - name: Ensure ucredit is set in /etc/security/pwquality.conf
+    lineinfile:
+      path: /etc/security/pwquality.conf
+      regexp: '^#?\s*(ucredit\s*=\s*)'
+      line: 'ucredit = -1'
+      state: present
+      backrefs: yes
+
+  - name: Ensure ocredit is set in /etc/security/pwquality.conf
+    lineinfile:
+      path: /etc/security/pwquality.conf
+      regexp: '^#?\s*(ocredit\s*=\s*)'
+      line: 'ocredit = -1'
+      state: present
+      backrefs: yes
+
+  - name: Ensure lcredit is set in /etc/security/pwquality.conf
+    lineinfile:
+      path: /etc/security/pwquality.conf
+      regexp: '^#?\s*(lcredit\s*=\s*)'
+      line: 'lcredit = -1'
+      state: present
+      backrefs: yes
+
+  - name: Ensure difok is set in /etc/security/pwquality.conf
+    lineinfile:
+      path: /etc/security/pwquality.conf
+      regexp: '^#?\s*(difok\s*=\s*)'
+      line: 'difok = 8'
+      state: present
+      backrefs: yes
+
+  - name: Configure password lockout policy in /etc/security/faillock.conf
+    lineinfile:
+      path: /etc/security/faillock.conf
+      state: present
+      regexp: "{{ item.regexp }}"
+      line: "{{ item.line }}"
+    with_items:
+    - {regexp: '^deny', line: 'deny = 5'}
+    - {regexp: '^unlock_time', line: 'unlock_time = 900'}
+    ignore_errors: yes
+
+  - name: Ensure specific PAM settings in /etc/pam.d/system-auth
+    blockinfile:
+      path: /etc/pam.d/system-auth
+      block: |
+        password requisite pam_pwhistory.so try_first_pass local_users_only enforce_for_root retry=3 remember=5
+        password sufficient pam_unix.so sha512 shadow try_first_pass use_authtok remember=5
+      state: present
+      create: yes
+
+  - name: Set password hashing algorithm to sha512
+    lineinfile:
+      path: /etc/libuser.conf
+      state: present
+      regexp: '^crypt_style'
+      line: 'crypt_style = sha512'
+
+  - name: Set password hashing algorithm in /etc/login.defs
+    lineinfile:
+      path: /etc/login.defs
+      state: present
+      regexp: '^ENCRYPT_METHOD'
+      line: 'ENCRYPT_METHOD SHA512'
+
+  - name: Set PASS_MAX_DAYS to 90 in /etc/login.defs
+    lineinfile:
+      path: /etc/login.defs
+      state: present
+      regexp: '^PASS_MAX_DAYS'
+      line: 'PASS_MAX_DAYS 90'
+
+  - name: Set PASS_MIN_DAYS to 1 in /etc/login.defs
+    lineinfile:
+      path: /etc/login.defs
+      state: present
+      regexp: '^PASS_MIN_DAYS'
+      line: 'PASS_MIN_DAYS 1'
+
+  - name: Set PASS_WARN_AGE to 7 in /etc/login.defs
+    lineinfile:
+      path: /etc/login.defs
+      state: present
+      regexp: '^PASS_WARN_AGE'
+      line: 'PASS_WARN_AGE 7'
+
+  - name: Set default password inactivity period to 30 days
+    command: useradd -D -f 30
+
+  - name: Set umask to 027 in /etc/profile.d/set_umask.sh
+    copy:
+      dest: /etc/profile.d/set_umask.sh
+      content: |
+        umask 027
+        readonly TMOUT=600
+        export TMOUT
+
+  - name: Set root account default group to GID 0
+    user:
+      name: root
+      group: 0
+
+  - name: Create toor user
+    user:
+      name: toor
+      state: present
+      create_home: yes
+
+  - name: Ensure toor user is in the sudo group
+    user:
+      name: toor
+      groups: wheel
+      append: yes
+
+  - name: Ensure sudoers file grants sudo access to toor user
+    lineinfile:
+      path: /etc/sudoers
+      line: 'toor  ALL=(ALL:ALL) ALL'
+      validate: '/usr/sbin/visudo -cf %s'
+      state: present
+
+  - name: Set toor password
+    user:
+      name: toor
+      password: "{{ 'P@ssw0rd123!' | password_hash('sha512') }}"
+
+  - name: Ensure ListenAddress is set in /etc/ssh/sshd_config
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^#?\s*ListenAddress'
+      line: 'ListenAddress 0.0.0.0'
+      state: present
+
+  - name: Ensure TCPKeepAlive is set in /etc/ssh/sshd_config
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^#?\s*TCPKeepAlive'
+      line: 'TCPKeepAlive yes'
+      state: present
+
+  - name: Ensure PrintMotd is set in /etc/ssh/sshd_config
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^#?\s*PrintMotd'
+      line: 'PrintMotd yes'
+      state: present
+
+  - name: Ensure PrintLastLog is set in /etc/ssh/sshd_config
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^#?\s*PrintLastLog'
+      line: 'PrintLastLog yes'
+      state: present
+
+  - name: Ensure AllowTcpForwarding is set in /etc/ssh/sshd_config
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^#?\s*AllowTcpForwarding'
+      line: 'AllowTcpForwarding no'
+      state: present
+
+  - name: Remove excess permissions from /etc/passwd
+    ##07 Hardening System Maintenance##
+    file:
+      path: /etc/passwd
+      mode: '0644' # Set permissions to -rw-r--r--
+
+  - name: Set owner of /etc/passwd to root
+    file:
+      path: /etc/passwd
+      owner: root
+
+  - name: Set group of /etc/passwd to root
+    file:
+      path: /etc/passwd
+      group: root
+
+  - name: Remove excess permissions from /etc/passwd-
+    file:
+      path: /etc/passwd-
+      mode: '0644' # Set permissions to -rw-r--r--
+
+  - name: Set owner of /etc/passwd- to root
+    file:
+      path: /etc/passwd-
+      owner: root
+
+  - name: Set group of /etc/passwd- to root
+    file:
+      path: /etc/passwd-
+      group: root
+
+  - name: Remove excess permissions from /etc/group
+    file:
+      path: /etc/group
+      mode: '0644' # Set permissions to -rw-r--r--
+
+  - name: Set owner of /etc/group to root
+    file:
+      path: /etc/group
+      owner: root
+
+  - name: Set group of /etc/group to root
+    file:
+      path: /etc/group
+      group: root
+
+  - name: Remove excess permissions from /etc/group-
+    file:
+      path: /etc/group-
+      mode: '0644' # Set permissions to -rw-r--r--
+
+  - name: Set owner of /etc/group- to root
+    file:
+      path: /etc/group-
+      owner: root
+
+  - name: Set group of /etc/group- to root
+    file:
+      path: /etc/group-
+      group: root
+
+  - name: Set owner of /etc/shadow to root
+    file:
+      path: /etc/shadow
+      owner: root
+
+  - name: Set group of /etc/shadow to root
+    file:
+      path: /etc/shadow
+      group: root
+
+  - name: Set permissions of /etc/shadow to 0000
+    file:
+      path: /etc/shadow
+      mode: '0000' # Set permissions to 0000
+
+  - name: Set owner of /etc/shadow- to root
+    file:
+      path: /etc/shadow-
+      owner: root
+
+  - name: Set group of /etc/shadow- to root
+    file:
+      path: /etc/shadow-
+      group: root
+
+  - name: Set permissions of /etc/shadow- to 0000
+    file:
+      path: /etc/shadow-
+      mode: '0000' # Set permissions to 0000
+
+  - name: Set owner of /etc/gshadow to root
+    file:
+      path: /etc/gshadow
+      owner: root
+
+  - name: Set group of /etc/gshadow to root
+    file:
+      path: /etc/gshadow
+      group: root
+
+  - name: Set permissions of /etc/gshadow to 0000
+    file:
+      path: /etc/gshadow
+      mode: '0000' # Set permissions to 0000
+
+  - name: Set owner of /etc/gshadow- to root
+    file:
+      path: /etc/gshadow-
+      owner: root
+
+  - name: Set group of /etc/gshadow- to root
+    file:
+      path: /etc/gshadow-
+      group: root
+
+  - name: Set permissions of /etc/gshadow- to 0000
+    file:
+      path: /etc/gshadow-
+      mode: '0000' # Set permissions to 0000
+
+  - name: Ensure the /etc/motd file exists
+    ##08 Hardening Banner Configuration and Miscellaneous Check##
+    file:
+      path: /etc/motd
+      state: touch
+
+  - name: Check if the warning message is already present
+    shell: grep -Fxq '* * * * * * * W A R N I N G * * * * * * * * * *' /etc/motd
+    register: motd_warning_present
+    ignore_errors: yes
+    changed_when: false
+
+  - name: Ensure warning message in /etc/motd
+    lineinfile:
+      path: /etc/motd
+      create: yes
+      line: |
+        * * * * * * * W A R N I N G * * * * * * * * * *
+        This computer system is the property of PT. Bank Pembangunan Daerah Jawa Barat dan Banten, Tbk (bank bjb). It is for authorized use only.
+        Any or all uses of this system and all files on this system may be intercepted, monitored, recorded, copied, audited, inspected,
+        and disclosed to authorized bank bjb and law enforcement personnel. By using this system, the user consents to such interception,
+        monitoring, recording, copying, auditing, inspection, and disclosure at the discretion of authorized bank bjb personnel.
+        Unauthorized or improper use of this system may result in administrative disciplinary action and/or civil charges/criminal penalties.
+        By continuing to use this system you indicate your awareness of and consent to these terms and conditions of use.
+        LOG OFF IMMEDIATELY if you do not agree to the conditions stated in this warning.
+        * * * * * BANK BJB * * * * * * * *
+      state: present
+      mode: '0644'
+      insertafter: EOF
+    when: motd_warning_present.rc != 0
+
+  - name: Ensure the /etc/systemd/coredump.conf.d/ directory exists
+    file:
+      path: /etc/systemd/coredump.conf.d/
+      state: directory
+      mode: '0755'
+
+  - name: Create custom coredump configuration file
+    copy:
+      dest: /etc/systemd/coredump.conf.d/custom.conf
+      content: |
+        [Coredump]
+        Storage=none
+        ProcessSizeMax=0
+      mode: '0644'
+
+  - name: Ensure the /etc/sysconfig/prelink file exists
+    file:
+      path: /etc/sysconfig/prelink
+      state: touch
+      mode: '0644'
+
+  - name: Set PRELINKING=no in /etc/sysconfig/prelink
+    lineinfile:
+      path: /etc/sysconfig/prelink
+      line: 'PRELINKING=no'
+      create: yes
+      mode: '0644'
+
+  - name: Ensure sshd service is restarted
+    systemd:
+      name: sshd
+      state: restarted
+    notify:
+    - hardening
+
+  handlers:
+  - name: hardening
+    debug:
+      msg: "Hardenig completed."
+

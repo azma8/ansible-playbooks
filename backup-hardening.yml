@@ -1,0 +1,119 @@
+- name: Backup file Configuration Hardening linux
+  hosts: all
+  become: yes
+  vars:
+    today: "{{ lookup('pipe', 'date +%Y_%m_%d__%H_%M_%S') }}"
+    date: "{{ lookup('pipe', 'date +%Y_%m_%d') }}"
+
+  tasks:
+  ## 01 Hardening Backup ##
+  - name: Check if backup file exists
+    stat:
+      path: "{{ item }}.ori.bak"
+    with_items:
+    - /etc/login.defs
+    - /etc/pam.d/system-auth
+    - /etc/pam.d/password-auth
+    - /etc/security/pwquality.conf
+    - /etc/profile
+    - /etc/bashrc
+    - /etc/ssh/sshd_config
+    - /etc/sysctl.conf
+    - /etc/security/limits.conf
+    register: backup_files_1
+
+  - name: Check if backup file with date exists
+    stat:
+      path: "{{ item }}.ori.{{ date }}.bak"
+    with_items:
+    - /etc/login.defs
+    - /etc/pam.d/system-auth
+    - /etc/pam.d/password-auth
+    - /etc/security/pwquality.conf
+    - /etc/profile
+    - /etc/bashrc
+    - /etc/ssh/sshd_config
+    - /etc/sysctl.conf
+    - /etc/security/limits.conf
+    register: backup_files_2
+
+  - name: Create backup of configuration files
+    command: "cp {{ item.item }} {{ item.item }}.ori.bak"
+    when: not item.stat.exists
+    with_items: "{{ backup_files_1.results }}"
+    become: yes
+    ignore_errors: yes
+
+  - name: Create backup with date of configuration files
+    command: "cp {{ item.item }} {{ item.item }}.ori.{{ date }}.bak"
+    when: not item.stat.exists
+    with_items: "{{ backup_files_2.results }}"
+    become: yes
+    ignore_errors: yes
+
+  ## 02 Create Backup Directory ##
+  - name: Create directory for hardening backups
+    file:
+      path: /root/backup-hardening
+      state: directory
+
+  ## 03 Find Backup Files and Move to /root/backup-hardening ##
+  - name: Find .bak files in /etc/ and its subdirectories
+    find:
+      paths: /etc/
+      patterns: "*.ori.bak"
+      recurse: yes
+    register: bak_ori_files
+
+  - name: Display all .bak file paths
+    debug:
+      msg: "{{ bak_ori_files.files | map(attribute='path') | list }}"
+
+  - name: Find .bak files with date in /etc/ and its subdirectories
+    find:
+      paths: /etc/
+      patterns: "*.ori.{{ date }}.bak"
+      recurse: yes
+    register: bak_files
+
+  - name: Display all .bak with date file paths
+    debug:
+      msg: "{{ bak_files.files | map(attribute='path') | list }}.bak"
+
+  - name: Check if backup file in /root/backup-hardening exists
+    stat:
+      path: "{{ item }}.ori.bak"
+    with_items:
+    - /root/backup-hardening/login.defs
+    - /root/backup-hardening/system-auth
+    - /root/backup-hardening/password-auth
+    - /root/backup-hardening/pwquality.conf
+    - /root/backup-hardening/profile
+    - /root/backup-hardening/bashrc
+    - /root/backup-hardening/sshd_config
+    - /root/backup-hardening/sysctl.conf
+    - /root/backup-hardening/limits.conf
+    register: backup_hardening_files
+
+  - name: Move backup files to /root/backup-hardening
+    command: "mv {{ item.item }} {{ item.item }}.ori.bak"
+    when: not item.stat.exists
+    with_items: "{{ backup_hardening_files.results }}"
+    become: yes
+    ignore_errors: yes
+
+  - name: Find .bak files in /root/backup-hardening
+    find:
+      paths: /root/backup-hardening
+      patterns: "*.ori.bak"
+      recurse: yes
+    register: backup_ori_files
+
+  ## 04 Display Backup Paths ##
+  - name: Display all .bak file paths
+    debug:
+      msg: "{{ backup_ori_files.files | map(attribute='path') | list }}"
+
+  - name: Backup Successed
+    debug:
+      msg: "Backup Hardening Completed. Next Step: Run Ansible Hardening"

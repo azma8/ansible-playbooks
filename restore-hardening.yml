@@ -1,0 +1,37 @@
+- name: Restore file Configuration from Hardening linux backup
+  hosts: harbor
+  become: yes
+  vars:
+    today: "{{ lookup('pipe', 'date +%Y_%m_%d__%H_%M_%S') }}"
+    date: "{{ lookup('pipe', 'date +%Y_%m_%d') }}"
+
+  tasks:
+  - name: Check if original backup file exists in /root/backup-hardening
+    stat:
+      path: "{{ item }}.ori.bak"
+    with_items:
+    - /etc/login.defs
+    - /etc/pam.d/system-auth
+    - /etc/pam.d/password-auth
+    - /etc/security/pwquality.conf
+    - /etc/profile
+    - /etc/bashrc
+    - /etc/ssh/sshd_config
+    - /etc/sysctl.conf
+    - /etc/security/limits.conf
+    register: backup_files_ori
+
+  - name: Restore original backup files from /root/backup-hardening
+    command: "cp /root/backup-hardening/{{ item.item | basename }}.ori.bak {{ item.item }}"
+    when: item.stat.exists
+    with_items: "{{ backup_files_ori.results }}"
+    ignore_errors: yes
+
+  - name: Ensure sshd service is restarted
+    systemd:
+      name: sshd
+      state: restarted
+
+  - name: Restore Completed
+    debug:
+      msg: "Restore from Backup Hardening Completed. System Restored to Original State."
